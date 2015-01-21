@@ -11,9 +11,17 @@ module ActiveZuora
       @username = configuration[:username]
       @password = configuration[:password]
       @session_timeout = configuration[:session_timeout] || 15.minutes
-      @soap_client = Savon::Client.new do
-        wsdl.document = configuration[:wsdl] || WSDL
-        http.proxy = configuration[:http_proxy] if configuration[:http_proxy]
+      @proxy = configuration[:http_proxy]
+      @wsdl = configuration[:wsdl] || WSDL
+      if @proxy
+        @soap_client = Savon.client(
+            wsdl: @wsdl,
+            proxy: @proxy
+        )
+      else
+        @soap_client = Savon.client(
+            wsdl: @wsdl
+        )
       end
     end
 
@@ -21,7 +29,7 @@ module ActiveZuora
       # Returns a session_id upon success, raises an exception on failure.
       # Instance variables aren't available within the soap request block.
       body = { :username => @username, :password => @password }
-      @soap_client.request(:login){ soap.body = body }[:login_response][:result][:session]
+      @soap_client.call(:login, message: body)[:login_response][:result][:session]
     end
 
     def request(*args, &block)
@@ -29,11 +37,11 @@ module ActiveZuora
       header = { 'SessionHeader' => { 'session' => @session_id } }
       header.merge!(@custom_header) if @custom_header
 
-      @soap_client.request(*args) do
+      @soap_client.call(*args) {
         soap.header = header
         yield(soap)
-      end
-    rescue Savon::SOAP::Fault => exception
+      }
+    rescue Savon::SOAPFault => exception
       # Catch invalid sessions, and re-issue the request.
       raise unless exception.message =~ /INVALID_SESSION/
       @session_id = login
